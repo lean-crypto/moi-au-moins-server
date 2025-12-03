@@ -129,3 +129,90 @@ const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => {
   console.log("🚀 Serveur opérationnel sur le port", PORT);
 });
+// === IMPORTS ===
+import express from "express";
+import cors from "cors";
+import { Server } from "socket.io";
+import http from "http";
+
+// === CONFIG EXPRESS + CORS ===
+const app = express();
+app.use(cors());
+
+// === SERVEUR HTTP ===
+const server = http.createServer(app);
+
+// === SOCKET.IO AVEC CONFIG RENDER ===
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"],
+  },
+});
+
+// === STOCKAGE DES SALLES ===
+const rooms = {}; 
+// rooms = {
+//   "AB4D9": { players: ["Lena", "Nina"], creator: "socketID1" }
+// };
+
+// === NOUVEL UTILISATEUR CONNECTÉ ===
+io.on("connection", (socket) => {
+  console.log("🎉 Nouveau joueur connecté :", socket.id);
+
+  // --- CRÉATION DE SALLE ---
+  socket.on("createRoom", ({ roomCode, playerName }) => {
+    rooms[roomCode] = {
+      players: [playerName],
+      creator: socket.id,      // <===== le créateur est enregistré ici
+    };
+
+    socket.join(roomCode);
+
+    console.log("🏠 Salle créée :", roomCode, "par", playerName);
+
+    io.to(roomCode).emit("updatePlayers", rooms[roomCode].players);
+  });
+
+  // --- REJOINDRE UNE SALLE ---
+  socket.on("joinRoom", ({ roomCode, playerName }) => {
+    if (!rooms[roomCode]) {
+      socket.emit("errorMessage", "La salle n'existe pas !");
+      return;
+    }
+
+    rooms[roomCode].players.push(playerName);
+    socket.join(roomCode);
+
+    console.log("👤 Nouveau joueur dans", roomCode, ":", playerName);
+
+    io.to(roomCode).emit("updatePlayers", rooms[roomCode].players);
+  });
+
+  // --- DÉMARRAGE DE LA PARTIE ---
+  socket.on("startGame", ({ roomCode }) => {
+    if (!rooms[roomCode]) return;
+
+    // 🛑 Seul le créateur peut démarrer
+    if (rooms[roomCode].creator !== socket.id) {
+      socket.emit("errorMessage", "Seul le créateur peut démarrer la partie !");
+      return;
+    }
+
+    console.log("🎮 Début de la partie pour la salle :", roomCode);
+
+    // Tous les joueurs reçoivent l'événement
+    io.to(roomCode).emit("gameStarted");
+  });
+
+  // --- DÉCONNEXION ---
+  socket.on("disconnect", () => {
+    console.log("❌ Joueur déconnecté :", socket.id);
+  });
+});
+
+// === DÉMARRAGE DU SERVEUR ===
+server.listen(10000, () => {
+  console.log("🚀 Serveur opérationnel sur le port 10000 !");
+});
+
