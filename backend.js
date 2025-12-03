@@ -1,67 +1,120 @@
-// === Backend Moi Au Moins ===
+// backend.js
 
-// Import
 import express from "express";
-import cors from "cors";
-import { createServer } from "http";
+import http from "http";
 import { Server } from "socket.io";
 
-// Express + HTTP
 const app = express();
-const server = createServer(app);
+const server = http.createServer(app);
 
-// Autoriser ton front CodeSandbox
-app.use(cors({
-  origin: "*",
-  methods: ["GET", "POST"]
-}));
-
-// Socket.IO config pour Render
+// Socket.IO configuré pour Render
 const io = new Server(server, {
   cors: {
     origin: "*",
-    methods: ["GET", "POST"]
-  }
+    methods: ["GET", "POST"],
+  },
 });
 
-// Salle et joueurs
+// Mémoire des salles
+// rooms[code] = { hostId, hostName, players: [{id, name}], started: bool }
 const rooms = {};
 
-// Nouveau joueur connecté
+// Quand un client se connecte
 io.on("connection", (socket) => {
-  console.log("🔌 Nouveau joueur :", socket.id);
+  console.log("👤 Nouveau joueur connecté :", socket.id);
 
-  // Créer une salle
+  // Création de salle
   socket.on("createRoom", ({ roomCode, playerName }) => {
-    rooms[roomCode] = { players: [playerName], phrases: {} };
+    if (!roomCode || !playerName) return;
+
+    // Si la salle existe déjà, on peut refuser ou écraser, là on refuse
+    if (rooms[roomCode]) {
+      socket.emit("roomError", "Cette salle existe déjà, choisis un autre code.");
+      return;
+    }
+
+    rooms[roomCode] = {
+      hostId: socket.id,
+      hostName: playerName,
+      players: [{ id: socket.id, name: playerName }],
+      started: false,
+    };
+
     socket.join(roomCode);
-    console.log(`📂 Salle créée : ${roomCode}`);
+    console.log(`📦 Salle créée ${roomCode} par ${playerName}`);
+
+    socket.emit("roomCreated", {
+      roomCode,
+      isHost: true,
+      players: rooms[roomCode].players,
+    });
+
     io.to(roomCode).emit("updatePlayers", rooms[roomCode].players);
   });
 
   // Rejoindre une salle
   socket.on("joinRoom", ({ roomCode, playerName }) => {
-    if (!rooms[roomCode]) return;
-    rooms[roomCode].players.push(playerName);
+    const room = rooms[roomCode];
+    if (!room) {
+      socket.emit("roomError", "Cette salle n'existe pas.");
+      return;
+    }
+
+    room.players.push({ id: socket.id, name: playerName });
     socket.join(roomCode);
-    console.log(`👤 ${playerName} rejoint ${roomCode}`);
-    io.to(roomCode).emit("updatePlayers", rooms[roomCode].players);
+
+    console.log(`➡️ ${playerName} rejoint la salle ${roomCode}`);
+
+    // On prévient le joueur qui rejoint
+    socket.emit("roomJoined", {
+      roomCode,
+      isHost: false,
+      hostName: room.hostName,
+      players: room.players,
+    });
+
+    // On met à jour la liste des joueurs pour tout le monde
+    io.to(roomCode).emit("updatePlayers", room.players);
   });
 
-  // Envoyer une phrase
-  socket.on("sendPhrase", ({ roomCode, playerName, phrase }) => {
-    rooms[roomCode].phrases[playerName] = phrase;
-    io.to(roomCode).emit("updatePhrases", rooms[roomCode].phrases);
+  // Démarrer la partie (uniquement par le créateur)
+  socket.on("startGame", ({ roomCode }) => {
+    const room = rooms[roomCode];
+    if (!room) return;
+
+    if (socket.id !== room.hostId) {
+      socket.emit("roomError", "Seul le créateur peut démarrer la partie.");
+      return;
+    }
+
+    room.started = true;
+    console.log(`🎮 Partie démarrée dans la salle ${roomCode}`);
+    io.to(roomCode).emit("gameStarted", { roomCode, round: 1 });
   });
 
   // Déconnexion
   socket.on("disconnect", () => {
-    console.log("❌ Déconnexion :", socket.id);
+    console.log("❌ Joueur déconnecté :", socket.id);
+
+    // On nettoie les joueurs dans chaque salle
+    for (const code of Object.keys(rooms)) {
+      const room = rooms[code];
+      room.players = room.players.filter((p) => p.id !== socket.id);
+
+      // Si c'était l'hôte, on supprime la salle
+      if (room.hostId === socket.id) {
+        io.to(code).emit("roomError", "Le créateur est parti, la salle est fermée.");
+        delete rooms[code];
+        console.log(`🗑 Salle supprimée ${code}`);
+      } else {
+        io.to(code).emit("updatePlayers", room.players);
+      }
+    }
   });
 });
 
-// Port Render
-const PORT = process.env.PORT || 3000;
+// Render : écoute sur le port donné
+const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => {
-  console.log("🚀 Serveur démarré sur Render, port", PORT);
+  console.log("🚀 Serveur opérationnel sur le port", PORT);
 });
