@@ -1,11 +1,12 @@
 {
   "name": "moi-au-moins-server",
   "version": "1.0.0",
+  "type": "module",
   "main": "backend.js",
-  "license": "MIT",
   "dependencies": {
     "express": "^4.19.0",
     "cors": "^2.8.5",
     "socket.io": "^4.7.5"
   }
 }
+
